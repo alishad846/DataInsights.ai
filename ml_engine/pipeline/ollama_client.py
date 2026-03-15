@@ -2,8 +2,8 @@
 ollama_client.py — Lightweight Ollama API wrapper
 ===================================================
 Used ONLY for:
-  1. Greeting responses in query_engine.py
-  2. Low-confidence column interpretation in schema_manager.py
+1. Greeting responses in query_engine.py
+2. Low-confidence column interpretation in schema_manager.py
 
 NOT used for: analytics, BI, forecasting, or dashboard generation.
 The pipeline remains fully deterministic when Ollama is unavailable.

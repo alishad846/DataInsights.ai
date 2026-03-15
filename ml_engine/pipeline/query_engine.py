@@ -1,582 +1,1060 @@
-import pandas as pd
+"""
+query_engine.py — Intelligent Dataset Q&A Engine
+==================================================
+Reads pre-computed pipeline artifacts (schema.json, kpi_summary.json,
+metrics.json, insights.json) and answers natural-language questions
+about any uploaded dataset.
+
+Usage (CLI):
+    python query_engine.py \
+        --user_id  <user_id>   \
+        --dataset_id <id>      \
+        --question  "what is the total sales?"
+
+Output (stdout):
+    { "answer": "...", "intent": "...", "confidence": 0.9 }
+"""
+
+import argparse
 import json
-from filelock import FileLock
 import os
 import sys
+import re
 import logging
 import datetime
-import re
-from rapidfuzz import process, fuzz
 
-try:
-    from pipeline.ollama_client import greeting_response as _ollama_greeting
-except ImportError:
+import pandas as pd
+import numpy as np
+
+logger = logging.getLogger("query_engine")
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(levelname)s [%(name)s]: %(message)s",
+    stream=sys.stderr,
+)
+
+# ─── Paths ────────────────────────────────────────────────────────────────────
+
+BASE_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "users")
+
+
+def resolve_dataset_dir(user_id: str, dataset_id: str) -> str:
+    return os.path.normpath(
+        os.path.join(BASE_DATA_DIR, user_id, dataset_id)
+    )
+
+
+def _load_json(path: str) -> dict | list | None:
     try:
-        from ollama_client import greeting_response as _ollama_greeting
-    except ImportError:
-        _ollama_greeting = None
-
-logger = logging.getLogger("system_logger")
-
-# Greeting keywords — handled by Ollama before the dataset query engine
-GREETING_TRIGGERS = {
-    "hello", "hi", "hey", "help", "who are you", "what can you do",
-    "how are you", "good morning", "good afternoon", "good evening"
-}
-
-# Non-data questions that have no meaningful dataset answer
-NON_DATA_QUESTIONS = [
-    "what is the capital", "ceo of", "founder of", "weather"
-]
-
-def check_guardrails(question):
-    q_lower = str(question).lower()
-    for trigger in NON_DATA_QUESTIONS:
-        if trigger in q_lower:
-            return "This question cannot be answered using the uploaded dataset."
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.warning(f"Could not read {path}: {e}")
     return None
 
-def detect_intent(question):
-    """
-    Rule-based intent routing mapping questions to templates.
-    Dataset exploration intents are detected first.
-    """
-    q_lower = str(question).lower()
 
-    # ── Dataset exploration intents (highest priority, checked first) ──────────
-    if any(p in q_lower for p in [
-        "tell me about", "describe dataset", "dataset summary",
-        "what data is available", "about this dataset", "overview of dataset"
-    ]):
-        return "dataset_summary"
+def _load_csv(path: str) -> "pd.DataFrame | None":
+    try:
+        if os.path.exists(path):
+            return pd.read_csv(path)
+    except Exception as e:
+        logger.warning(f"Could not read CSV {path}: {e}")
+    return None
 
-    if any(p in q_lower for p in [
-        "list products", "show products", "name of products",
-        "what products", "which products", "all products"
-    ]):
-        return "list_products"
 
-    if any(p in q_lower for p in [
-        "what columns", "dataset columns", "show columns",
-        "list columns", "column names", "available columns"
-    ]):
-        return "show_columns"
+# ─── Artifact Loader ──────────────────────────────────────────────────────────
 
-    if any(p in q_lower for p in [
-        "dataset overview", "executive summary", "key findings",
-        "main insights", "overview"
-    ]):
-        return "dataset_overview"
+class DatasetArtifacts:
+    """Lazily loads all artifacts for a dataset directory."""
 
-    # ── Ranking / Top-N intents ───────────────────────────────────────────────
-    if any(p in q_lower for p in [
-        "top", "best", "highest", "most profitable", "best performing",
-        "leading", "number one", "rank"
-    ]):
-        return "top_performers"
+    def __init__(self, dataset_dir: str):
+        self.dir = dataset_dir
+        self._schema   = None
+        self._kpi      = None
+        self._metrics  = None
+        self._insights = None
+        self._profile  = None
+        self._df       = None
 
-    if any(p in q_lower for p in [
-        "bottom", "worst", "lowest", "least", "underperform", "poor"
-    ]):
-        return "bottom_performers"
+    @property
+    def schema(self) -> dict:
+        if self._schema is None:
+            self._schema = _load_json(os.path.join(self.dir, "schema.json")) or {}
+        return self._schema
 
-    # ── Grouping / Segmentation ───────────────────────────────────────────────
-    if any(p in q_lower for p in [
-        "count by", "number of", "how many", "breakdown", "split by", "per category"
-    ]):
-        return "count_by_category"
+    @property
+    def kpi(self) -> dict:
+        if self._kpi is None:
+            self._kpi = _load_json(os.path.join(self.dir, "kpi_summary.json")) or {}
+        return self._kpi
 
-    if any(p in q_lower for p in [
-        "average by", "avg by", "mean by", "average per", "mean per"
-    ]):
-        return "average_by_category"
+    @property
+    def metrics(self) -> dict:
+        if self._metrics is None:
+            self._metrics = _load_json(os.path.join(self.dir, "metrics.json")) or {}
+        return self._metrics
 
-    # ── Time-based ──────────────────────────────────────────────────────────
-    if any(p in q_lower for p in [
-        "monthly", "by month", "per month", "month over month", "month wise"
-    ]):
-        return "monthly_breakdown"
+    @property
+    def insights(self) -> dict:
+        if self._insights is None:
+            self._insights = _load_json(os.path.join(self.dir, "insights.json")) or {}
+        return self._insights
 
-    if any(p in q_lower for p in [
-        "daily", "by day", "per day", "day wise"
-    ]):
-        return "daily_breakdown"
+    @property
+    def profile(self) -> dict:
+        if self._profile is None:
+            self._profile = _load_json(os.path.join(self.dir, "profile_report.json")) or {}
+        return self._profile
 
-    if any(p in q_lower for p in [
-        "date range", "earliest", "latest", "oldest", "newest", "when did", "start date", "end date"
-    ]):
-        return "date_range_info"
+    @property
+    def df(self) -> "pd.DataFrame | None":
+        if self._df is None:
+            cleaned = os.path.join(self.dir, "cleaned_data.csv")
+            raw_dir = os.path.dirname(os.path.dirname(os.path.dirname(self.dir)))
+            # Try cleaned first, then look for original upload
+            self._df = _load_csv(cleaned)
+        return self._df
 
-    # ── Profit / Financial ───────────────────────────────────────────────────
-    if any(p in q_lower for p in [
-        "profit", "margin", "earnings", "net income"
-    ]):
-        return "profit_analysis"
+    @property
+    def available(self) -> bool:
+        return bool(self.schema) or (self.df is not None)
 
-    # ── Data quality ─────────────────────────────────────────────────────────
-    if any(p in q_lower for p in [
-        "missing", "null", "empty", "data quality", "incomplete"
-    ]):
-        return "data_quality"
 
-    if any(p in q_lower for p in [
-        "distribution", "spread", "outlier", "range of", "min max"
-    ]):
-        return "distribution"
+# ─── Intent Router ───────────────────────────────────────────────────────────
 
-    # ── Analytical intents ─────────────────────────────────────────────────────
-    if "why" in q_lower or "cause" in q_lower or "reason" in q_lower or "drop" in q_lower:
-        return "root_cause"
-    if "predict" in q_lower or "future" in q_lower or "next" in q_lower or "forecast" in q_lower:
-        return "trend_analysis"
-    if "recommend" in q_lower or "increase" in q_lower or "improve" in q_lower or "should i do" in q_lower:
-        return "recommendation"
-    if "affect" in q_lower or "impact" in q_lower or "most important" in q_lower or "drive" in q_lower:
-        return "feature_importance"
-    if "compare" in q_lower or "vs" in q_lower or "versus" in q_lower:
-        return "comparison"
-    if "insight" in q_lower or "summary" in q_lower or "analyze" in q_lower:
-        return "analyst_summary"
-    if "filter" in q_lower or "only" in q_lower or "greater than" in q_lower or "less than" in q_lower or "where" in q_lower or "exclude" in q_lower:
-        return "filtering"
-    if "average" in q_lower or "sum" in q_lower or "total" in q_lower or "minimum" in q_lower or "maximum" in q_lower or "how many" in q_lower:
-        return "aggregation"
+INTENTS = {
+    "greeting": [
+        r"\bhello\b", r"\bhi\b", r"\bhey\b", r"\bgreet", r"\bgood\s+(morning|afternoon|evening)\b",
+        r"\bwhat can you (do|help|answer)\b", r"\bhelp\b", r"\bwhat are you\b", r"\babilities\b",
+    ],
+    "total_sales": [
+        r"\btotal\s+sales?\b", r"\btotal\s+revenue\b", r"\bsum\s+of\s+sales?\b",
+        r"\boverall\s+sales?\b", r"\bgross\s+sales?\b", r"\bhow\s+much\s+(did|were)\s+(we\s+)?sell\b",
+        r"\bsales?\s+total\b",
+    ],
+    "total_generic": [
+        r"\btotal\b", r"\bsum\s+of\b", r"\baggregate\b",
+    ],
+    "average": [
+        r"\baverage\b", r"\bavg\b", r"\bmean\b", r"\bper\s+\w+\b", r"\btypical\b",
+    ],
+    "maximum": [
+        r"\bmax(imum)?\b", r"\bhighest\b", r"\bbiggest\b", r"\bmost\b", r"\btop\b", r"\bbest\b",
+        r"\bpeak\b", r"\bgreatest\b",
+    ],
+    "minimum": [
+        r"\bmin(imum)?\b", r"\blowest\b", r"\bsmallest\b", r"\bworst\b", r"\bbottom\b",
+        r"\bweakest\b",
+    ],
+    "top_n": [
+        r"\btop\s+\d+\b", r"\bbest\s+\d+\b", r"\bhighest\s+\d+\b",
+    ],
+    "count": [
+        r"\bhow\s+many\b", r"\bcount\b", r"\bnumber\s+of\b", r"\bquantity\b", r"\btotal\s+records?\b",
+        r"\btotal\s+rows?\b", r"\btotal\s+entries\b",
+    ],
+    "region": [
+        r"\bregion\b", r"\bcountry\b", r"\bcountries\b", r"\bcity\b", r"\bcities\b",
+        r"\blocation\b", r"\bterritory\b", r"\bzone\b", r"\barea\b", r"\bmarket\b",
+        r"\bby\s+region\b", r"\bby\s+location\b", r"\bby\s+country\b", r"\bstate\b",
+    ],
+    "product": [
+        r"\bproduct\b", r"\bproducts\b", r"\bitem\b", r"\bitems\b", r"\bsku\b",
+        r"\bbest.sell\w+\b", r"\btop.sell\w+\b", r"\bgoods\b",
+    ],
+    "customer": [
+        r"\bcustomer\b", r"\bcustomers\b", r"\bclient\b", r"\bclients\b", r"\bbuyer\b",
+        r"\bbuyers\b", r"\baccount\b",
+    ],
+    "profit": [
+        r"\bprofit\b", r"\bprofitable\b", r"\bprofitability\b", r"\bmargin\b",
+        r"\bnet\s+income\b", r"\bearnings\b",
+    ],
+    "loss": [
+        r"\bloss\b", r"\blosses\b", r"\bnegative\b", r"\bdeficit\b", r"\bin\s+the\s+red\b",
+    ],
+    "trend": [
+        r"\btrend\b", r"\bover\s+time\b", r"\bmonthly\b", r"\bby\s+month\b",
+        r"\bquarterly\b", r"\bby\s+year\b", r"\bannual\b", r"\bhistorical\b",
+        r"\btime\s+series\b", r"\bgrowth\b",
+    ],
+    "forecast": [
+        r"\bforecast\b", r"\bpredict\b", r"\bnext\s+(month|quarter|year)\b",
+        r"\bfuture\b", r"\bprojection\b", r"\bexpect\b", r"\bestimate\b",
+    ],
+    "anomaly": [
+        r"\banomal\w+\b", r"\boutlier\b", r"\bspike\b", r"\bunusual\b",
+        r"\babnormal\b", r"\bweird\b", r"\bstrange\b",
+    ],
+    "comparison": [
+        r"\bcompar\w+\b", r"\bvs\.?\b", r"\bversus\b", r"\bdifference\s+between\b",
+        r"\bwhich\s+is\s+(better|worse|higher|lower)\b",
+    ],
+    "insight": [
+        r"\binsight\b", r"\banalysis\b", r"\banalyze\b", r"\brecommend\b",
+        r"\bsuggestion\b", r"\bwhat\s+should\b",
+    ],
+    "summary": [
+        r"\bsummary\b", r"\boverview\b", r"\bsummariz\w+\b", r"\bdescrib\w+\b",
+        r"\btell\s+me\s+about\b", r"\bwhat\s+is\s+in\b", r"\bwhat\s+does\s+the\s+data\b",
+        r"\babout\s+the\s+data\b",
+    ],
+    "columns": [
+        r"\bcolumn\b", r"\bfield\b", r"\bheader\b", r"\bvariable\b",
+        r"\bwhat\s+data\b", r"\bwhat\s+columns\b", r"\bwhat\s+fields\b",
+        r"\bstructure\b",
+    ],
+    "rows": [
+        r"\brow\b", r"\brecord\b", r"\bentry\b", r"\bdata\s+point\b",
+        r"\bsize\s+of\b", r"\bhow\s+large\b",
+    ],
+    "missing": [
+        r"\bmissing\b", r"\bnull\b", r"\bnan\b", r"\bempty\b", r"\bblank\b",
+        r"\bincomplete\b",
+    ],
+}
 
-    # Default
-    return "aggregation"
 
-def extract_entities(question, df_columns):
-    """
-    NLP Entity Extraction using RapidFuzz to map words in the question to DataFrame columns.
-    """
-    words = str(question).replace("?", "").replace(",", "").split()
-    entities = []
-    
-    for word in words:
-        if len(word) < 3: continue
-        result = process.extractOne(word, df_columns, scorer=fuzz.WRatio)
-        if result:
-            match_col, score, _ = result
-            if score > 80:
-                entities.append(match_col)
-                
-    return list(set(entities))
+def detect_intent(question: str) -> str:
+    """Returns the best matching intent for a question."""
+    q = question.lower()
 
-_ARTIFACT_CACHE = {}
+    # Priority intents (checked first)
+    priority_order = [
+        "greeting", "top_n", "total_sales", "anomaly", "forecast",
+        "trend", "region", "product", "customer", "profit", "loss",
+        "columns", "rows", "missing", "summary", "insight",
+        "count", "maximum", "minimum", "average", "total_generic", "comparison",
+    ]
 
-def execute_query(user_id, dataset_id, question):
-    """
-    Executes the query against the dataset.
-    Order: greeting check → guardrails → intent routing → pandas templates.
-    """
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    dataset_dir = os.path.join(base_dir, "data", "users", str(user_id), str(dataset_id))
-    q_lower = str(question).lower().strip()
+    for intent in priority_order:
+        patterns = INTENTS.get(intent, [])
+        for pat in patterns:
+            if re.search(pat, q):
+                return intent
+    return "unknown"
 
-    # ── 0. Greeting Detection (Ollama) ────────────────────────────────────────
-    is_greeting = any(trigger in q_lower for trigger in GREETING_TRIGGERS)
-    if is_greeting:
-        static_fallback = (
-            "Hello! I'm your DataInsights.ai assistant. "
-            "Ask me about totals, trends, averages, or insights from your uploaded dataset."
-        )
-        if _ollama_greeting:
-            answer = _ollama_greeting(question) or static_fallback
+
+# ─── Number Formatter ─────────────────────────────────────────────────────────
+
+def _fmt(val) -> str:
+    """Format a number nicely: 1234567 → 1,234,567.00"""
+    try:
+        f = float(val)
+        if abs(f) >= 1_000_000:
+            return f"{f:,.0f}"
+        return f"{f:,.2f}"
+    except Exception:
+        return str(val)
+
+
+def _extract_n(question: str, default: int = 5) -> int:
+    """Extract the N from 'top 10 products', etc."""
+    m = re.search(r"\b(?:top|best|highest|bottom|lowest|worst)\s+(\d+)\b", question.lower())
+    if m:
+        return int(m.group(1))
+    return default
+
+
+# ─── Answer Generators ────────────────────────────────────────────────────────
+
+def _answer_greeting(question: str) -> dict:
+    capabilities = (
+        "Here are things I can help you with:\n\n"
+        "• **Total, average, max/min** of any numeric column\n"
+        "• **Top N products, regions, customers** by sales or profit\n"
+        "• **Monthly/quarterly trends** over time\n"
+        "• **Profit & loss** breakdown\n"
+        "• **Forecasts** for next period\n"
+        "• **Anomalies & outliers** in your data\n"
+        "• **Dataset summary, structure & missing values**\n"
+        "• **AI insights** from your data\n\n"
+        "Just ask in plain English! For example:\n"
+        "*\"What is the total revenue?\"* or *\"Show me top 5 products by sales.\"*"
+    )
+    return {"answer": capabilities, "intent": "greeting", "confidence": 1.0}
+
+
+def _answer_summary(artifacts: DatasetArtifacts) -> dict:
+    profile = artifacts.profile
+    kpi     = artifacts.kpi
+    schema  = artifacts.schema
+
+    parts = []
+
+    if profile:
+        rows = profile.get("row_count", "?")
+        cols = profile.get("column_count", "?")
+        parts.append(f"**Dataset Overview:** {rows:,} rows × {cols} columns.")
+
+        num_cols  = profile.get("numeric_columns", [])
+        cat_cols  = profile.get("categorical_columns", [])
+        if num_cols:
+            parts.append(f"**Numeric columns:** {', '.join(num_cols[:8])}{'...' if len(num_cols) > 8 else ''}.")
+        if cat_cols:
+            parts.append(f"**Categorical columns:** {', '.join(cat_cols[:8])}{'...' if len(cat_cols) > 8 else ''}.")
+
+        missing = profile.get("missing_values", {})
+        if missing:
+            mv_str = ", ".join(f"{c}: {v}" for c, v in list(missing.items())[:5])
+            parts.append(f"**Missing values detected in:** {mv_str}.")
         else:
-            answer = static_fallback
+            parts.append("**No missing values** found in the dataset. ✅")
+
+    # Key KPIs
+    if kpi:
+        sales_col = schema.get("sales_column")
+        if sales_col and sales_col in kpi:
+            s = kpi[sales_col]
+            total = s.get("sum") or s.get("total")
+            if total:
+                parts.append(f"**Total {sales_col}:** {_fmt(total)}.")
+
+    if not parts:
+        return {"answer": "I could not find a summary for this dataset. Try waiting for processing to complete.", "intent": "summary", "confidence": 0.5}
+
+    return {"answer": "\n\n".join(parts), "intent": "summary", "confidence": 0.9}
+
+
+def _answer_columns(artifacts: DatasetArtifacts) -> dict:
+    schema  = artifacts.schema
+    profile = artifacts.profile
+
+    known_roles = {
+        k.replace("_column", ""): v
+        for k, v in schema.items()
+        if k.endswith("_column") and isinstance(v, str)
+    }
+
+    if not known_roles and not profile:
+        return {"answer": "Column information is not available yet. Please ensure the dataset has been processed.", "intent": "columns", "confidence": 0.5}
+
+    parts = []
+
+    if known_roles:
+        role_lines = "\n".join(f"  • **{role.capitalize()}** → `{col}`" for role, col in known_roles.items())
+        parts.append(f"**Detected column roles:**\n{role_lines}")
+
+    if profile:
+        num_cols = profile.get("numeric_columns", [])
+        cat_cols = profile.get("categorical_columns", [])
+        dt_cols  = profile.get("datetime_columns", [])
+        if num_cols:
+            parts.append(f"**Numeric columns ({len(num_cols)}):** {', '.join(num_cols)}.")
+        if cat_cols:
+            parts.append(f"**Text/Category columns ({len(cat_cols)}):** {', '.join(cat_cols)}.")
+        if dt_cols:
+            parts.append(f"**Date columns ({len(dt_cols)}):** {', '.join(dt_cols)}.")
+
+    return {"answer": "\n\n".join(parts), "intent": "columns", "confidence": 0.9}
+
+
+def _answer_rows(artifacts: DatasetArtifacts) -> dict:
+    profile = artifacts.profile
+    if profile and "row_count" in profile:
+        r = profile["row_count"]
+        c = profile.get("column_count", "?")
+        return {"answer": f"The dataset contains **{r:,} rows** and **{c} columns**.", "intent": "rows", "confidence": 1.0}
+    df = artifacts.df
+    if df is not None:
+        return {"answer": f"The dataset contains **{len(df):,} rows** and **{len(df.columns)} columns**.", "intent": "rows", "confidence": 0.9}
+    return {"answer": "Row count is not available yet.", "intent": "rows", "confidence": 0.4}
+
+
+def _answer_missing(artifacts: DatasetArtifacts) -> dict:
+    profile = artifacts.profile
+    if profile:
+        missing = profile.get("missing_values", {})
+        if not missing:
+            return {"answer": "✅ **No missing values** were detected in your dataset.", "intent": "missing", "confidence": 1.0}
+        lines = "\n".join(f"  • **{c}**: {v} missing value(s)" for c, v in missing.items())
+        return {"answer": f"**Missing values detected:**\n{lines}", "intent": "missing", "confidence": 1.0}
+    df = artifacts.df
+    if df is not None:
+        missing = df.isnull().sum()
+        missing = missing[missing > 0]
+        if missing.empty:
+            return {"answer": "✅ **No missing values** were detected in your dataset.", "intent": "missing", "confidence": 0.9}
+        lines = "\n".join(f"  • **{c}**: {v}" for c, v in missing.items())
+        return {"answer": f"**Missing values detected:**\n{lines}", "intent": "missing", "confidence": 0.9}
+    return {"answer": "Missing value information is not available.", "intent": "missing", "confidence": 0.4}
+
+
+def _answer_total(question: str, artifacts: DatasetArtifacts) -> dict:
+    schema = artifacts.schema
+    kpi    = artifacts.kpi
+
+    # Determine target column from question
+    target_col = _find_target_column(question, schema, artifacts.df)
+
+    # Try KPI cache first
+    if target_col and kpi and target_col in kpi:
+        val = kpi[target_col].get("sum") or kpi[target_col].get("total")
+        if val is not None:
+            return {"answer": f"The **total {target_col}** is **{_fmt(val)}**.", "intent": "total_sales" if "sales" in question.lower() or "revenue" in question.lower() else "total_generic", "confidence": 0.95}
+
+    # Fallback: compute from CSV
+    df = artifacts.df
+    if df is not None and target_col and target_col in df.columns:
+        val = df[target_col].sum()
+        return {"answer": f"The **total {target_col}** is **{_fmt(val)}**.", "intent": "total_generic", "confidence": 0.85}
+
+    # Try sales column directly
+    sales_col = schema.get("sales_column")
+    if sales_col and kpi and sales_col in kpi:
+        val = kpi[sales_col].get("sum") or kpi[sales_col].get("total")
+        if val is not None:
+            return {"answer": f"The **total {sales_col}** is **{_fmt(val)}**.", "intent": "total_sales", "confidence": 0.9}
+
+    if df is not None and sales_col and sales_col in df.columns:
+        val = df[sales_col].sum()
+        return {"answer": f"The **total {sales_col}** is **{_fmt(val)}**.", "intent": "total_sales", "confidence": 0.8}
+
+    return {"answer": "I could not compute a total from your dataset. Please ensure the dataset has been processed successfully.", "intent": "total_generic", "confidence": 0.3}
+
+
+def _answer_average(question: str, artifacts: DatasetArtifacts) -> dict:
+    schema = artifacts.schema
+    kpi    = artifacts.kpi
+    target_col = _find_target_column(question, schema, artifacts.df)
+
+    if target_col and kpi and target_col in kpi:
+        val = kpi[target_col].get("mean") or kpi[target_col].get("avg")
+        if val is not None:
+            return {"answer": f"The **average {target_col}** is **{_fmt(val)}**.", "intent": "average", "confidence": 0.95}
+
+    df = artifacts.df
+    if df is not None and target_col and target_col in df.columns:
+        val = df[target_col].mean()
+        return {"answer": f"The **average {target_col}** is **{_fmt(val)}**.", "intent": "average", "confidence": 0.85}
+
+    sales_col = schema.get("sales_column")
+    if sales_col and df is not None and sales_col in df.columns:
+        val = df[sales_col].mean()
+        return {"answer": f"The **average {sales_col}** per record is **{_fmt(val)}**.", "intent": "average", "confidence": 0.75}
+
+    return {"answer": "I could not compute an average. Please check the dataset has been processed.", "intent": "average", "confidence": 0.3}
+
+
+def _answer_max(question: str, artifacts: DatasetArtifacts) -> dict:
+    schema = artifacts.schema
+    kpi    = artifacts.kpi
+    target_col = _find_target_column(question, schema, artifacts.df)
+
+    if target_col and kpi and target_col in kpi:
+        val = kpi[target_col].get("max")
+        if val is not None:
+            return {"answer": f"The **maximum {target_col}** is **{_fmt(val)}**.", "intent": "maximum", "confidence": 0.95}
+
+    df = artifacts.df
+    if df is not None and target_col and target_col in df.columns:
+        val = df[target_col].max()
+        return {"answer": f"The **maximum {target_col}** is **{_fmt(val)}**.", "intent": "maximum", "confidence": 0.85}
+
+    sales_col = schema.get("sales_column")
+    if sales_col and df is not None and sales_col in df.columns:
+        val = df[sales_col].max()
+        return {"answer": f"The **highest {sales_col}** in a single record is **{_fmt(val)}**.", "intent": "maximum", "confidence": 0.75}
+
+    return {"answer": "I could not find the maximum value.", "intent": "maximum", "confidence": 0.3}
+
+
+def _answer_min(question: str, artifacts: DatasetArtifacts) -> dict:
+    schema = artifacts.schema
+    kpi    = artifacts.kpi
+    target_col = _find_target_column(question, schema, artifacts.df)
+
+    if target_col and kpi and target_col in kpi:
+        val = kpi[target_col].get("min")
+        if val is not None:
+            return {"answer": f"The **minimum {target_col}** is **{_fmt(val)}**.", "intent": "minimum", "confidence": 0.95}
+
+    df = artifacts.df
+    if df is not None and target_col and target_col in df.columns:
+        val = df[target_col].min()
+        return {"answer": f"The **minimum {target_col}** is **{_fmt(val)}**.", "intent": "minimum", "confidence": 0.85}
+
+    sales_col = schema.get("sales_column")
+    if sales_col and df is not None and sales_col in df.columns:
+        val = df[sales_col].min()
+        return {"answer": f"The **lowest {sales_col}** in a single record is **{_fmt(val)}**.", "intent": "minimum", "confidence": 0.75}
+
+    return {"answer": "I could not find the minimum value.", "intent": "minimum", "confidence": 0.3}
+
+
+def _answer_count(question: str, artifacts: DatasetArtifacts) -> dict:
+    profile = artifacts.profile
+    if profile and "row_count" in profile:
+        val = profile["row_count"]
+        return {"answer": f"Your dataset has **{val:,} records** (rows).", "intent": "count", "confidence": 1.0}
+    df = artifacts.df
+    if df is not None:
+        return {"answer": f"Your dataset has **{len(df):,} records** (rows).", "intent": "count", "confidence": 0.9}
+    return {"answer": "Record count is not available.", "intent": "count", "confidence": 0.3}
+
+
+def _answer_top_n(question: str, artifacts: DatasetArtifacts) -> dict:
+    n = _extract_n(question)
+    schema = artifacts.schema
+    df     = artifacts.df
+
+    # Determine groupby column (product/region/customer)
+    group_col   = None
+    group_label = "category"
+
+    if re.search(r"\bproduct\b|\bitem\b|\bsku\b", question.lower()):
+        group_col   = schema.get("product_column")
+        group_label = "product"
+    elif re.search(r"\bregion\b|\bcountry\b|\blocation\b|\barea\b|\bcity\b|\bstate\b", question.lower()):
+        group_col   = schema.get("region_column")
+        group_label = "region"
+    elif re.search(r"\bcustomer\b|\bclient\b|\bbuyer\b", question.lower()):
+        group_col   = schema.get("customer_column")
+        group_label = "customer"
+
+    # Determine value column
+    val_col = _find_target_column(question, schema, df)
+    if not val_col:
+        val_col = schema.get("sales_column") or schema.get("profit_column")
+
+    if df is None:
+        return {"answer": "Dataset not yet available for analysis.", "intent": "top_n", "confidence": 0.3}
+
+    # If no group column detected, try any categorical + numeric combo
+    if not group_col:
+        cats = df.select_dtypes(include=["object", "category"]).columns.tolist()
+        nums = df.select_dtypes(include=["number"]).columns.tolist()
+        if cats:
+            group_col   = cats[0]
+            group_label = group_col
+        if not val_col and nums:
+            val_col = nums[0]
+
+    if not group_col or not val_col or group_col not in df.columns or val_col not in df.columns:
+        return {"answer": f"I could not determine a grouping or value column to compute top {n}.", "intent": "top_n", "confidence": 0.4}
+
+    is_worst = bool(re.search(r"\bworst\b|\blowest\b|\bbottom\b", question.lower()))
+
+    agg = df.groupby(group_col)[val_col].sum().sort_values(ascending=is_worst)
+    top = agg.head(n)
+
+    label = "bottom" if is_worst else "top"
+    lines = "\n".join(f"  {i+1}. **{name}** — {_fmt(val)}" for i, (name, val) in enumerate(top.items()))
+    return {
+        "answer": f"**{label.capitalize()} {n} {group_label}s by {val_col}:**\n{lines}",
+        "intent": "top_n",
+        "confidence": 0.9
+    }
+
+
+def _answer_region(question: str, artifacts: DatasetArtifacts) -> dict:
+    schema = artifacts.schema
+    df     = artifacts.df
+
+    region_col = schema.get("region_column")
+    val_col    = _find_target_column(question, schema, df) or schema.get("sales_column") or schema.get("profit_column")
+
+    if not region_col or df is None:
+        return {"answer": "Region column could not be detected in your dataset.", "intent": "region", "confidence": 0.4}
+
+    if val_col not in df.columns:
+        return {"answer": f"Could not find a suitable value column to aggregate by region.", "intent": "region", "confidence": 0.4}
+
+    agg = df.groupby(region_col)[val_col].sum().sort_values(ascending=False)
+    best  = agg.idxmax()
+    worst = agg.idxmin()
+
+    top5 = agg.head(5)
+    lines = "\n".join(f"  {i+1}. **{r}** — {_fmt(v)}" for i, (r, v) in enumerate(top5.items()))
+
+    answer = (
+        f"**Regional breakdown by {val_col}:**\n{lines}\n\n"
+        f"🏆 **Best region:** {best} ({_fmt(agg[best])})\n"
+        f"⚠️ **Weakest region:** {worst} ({_fmt(agg[worst])})"
+    )
+    return {"answer": answer, "intent": "region", "confidence": 0.9}
+
+
+def _answer_product(question: str, artifacts: DatasetArtifacts) -> dict:
+    schema = artifacts.schema
+    df     = artifacts.df
+
+    product_col = schema.get("product_column")
+    val_col     = _find_target_column(question, schema, df) or schema.get("sales_column")
+
+    if not product_col or df is None:
+        return _answer_top_n(question + " by product", artifacts)
+
+    if val_col not in df.columns:
+        return {"answer": "Could not find a numeric column to rank products by.", "intent": "product", "confidence": 0.4}
+
+    agg   = df.groupby(product_col)[val_col].sum().sort_values(ascending=False)
+    best  = agg.idxmax()
+    worst = agg.idxmin()
+
+    top5 = agg.head(5)
+    lines = "\n".join(f"  {i+1}. **{p}** — {_fmt(v)}" for i, (p, v) in enumerate(top5.items()))
+
+    answer = (
+        f"**Top products by {val_col}:**\n{lines}\n\n"
+        f"🏆 **Best-selling:** {best} ({_fmt(agg[best])})\n"
+        f"⚠️ **Lowest performing:** {worst} ({_fmt(agg[worst])})"
+    )
+    return {"answer": answer, "intent": "product", "confidence": 0.9}
+
+
+def _answer_customer(question: str, artifacts: DatasetArtifacts) -> dict:
+    schema = artifacts.schema
+    df     = artifacts.df
+
+    cust_col = schema.get("customer_column")
+    val_col  = _find_target_column(question, schema, df) or schema.get("sales_column")
+
+    if not cust_col or df is None:
+        return {"answer": "Customer column could not be detected in your dataset.", "intent": "customer", "confidence": 0.4}
+
+    n = _extract_n(question, default=5)
+    agg = df.groupby(cust_col)[val_col].sum().sort_values(ascending=False)
+    top = agg.head(n)
+
+    lines = "\n".join(f"  {i+1}. **{c}** — {_fmt(v)}" for i, (c, v) in enumerate(top.items()))
+    total_customers = df[cust_col].nunique()
+
+    answer = f"**Top {n} customers by {val_col}:**\n{lines}\n\n📊 Total unique customers: **{total_customers:,}**"
+    return {"answer": answer, "intent": "customer", "confidence": 0.9}
+
+
+def _answer_profit(question: str, artifacts: DatasetArtifacts) -> dict:
+    schema  = artifacts.schema
+    kpi     = artifacts.kpi
+    metrics = artifacts.metrics
+    df      = artifacts.df
+
+    profit_col = schema.get("profit_column")
+    sales_col  = schema.get("sales_column")
+
+    parts = []
+
+    # From metrics
+    if metrics:
+        margin = metrics.get("profit_margin")
+        if margin is not None:
+            parts.append(f"**Profit margin:** {round(float(margin) * 100, 2)}%")
+        total_profit = metrics.get("total_profit")
+        if total_profit is not None:
+            parts.append(f"**Total profit:** {_fmt(total_profit)}")
+
+    # From KPI
+    if profit_col and kpi and profit_col in kpi:
+        val = kpi[profit_col].get("sum")
+        if val is not None and "Total profit" not in "\n".join(parts):
+            parts.append(f"**Total {profit_col}:** {_fmt(val)}")
+
+    # Compute from df
+    if df is not None and profit_col and profit_col in df.columns:
+        if not parts:
+            total = df[profit_col].sum()
+            avg   = df[profit_col].mean()
+            max_p = df[profit_col].max()
+            parts.append(f"**Total {profit_col}:** {_fmt(total)}")
+            parts.append(f"**Average {profit_col}:** {_fmt(avg)}")
+            parts.append(f"**Best single record:** {_fmt(max_p)}")
+    elif df is not None and sales_col and sales_col in df.columns:
+        # Estimate if no profit col
+        cost_col = schema.get("cost_column") or schema.get("price_column")
+        if cost_col and cost_col in df.columns:
+            est_profit = (df[sales_col] - df[cost_col]).sum()
+            parts.append(f"**Estimated total profit** (sales − cost): {_fmt(est_profit)}")
+
+    if not parts:
+        return {"answer": "Profit data could not be found. The dataset may not have a profit or cost column.", "intent": "profit", "confidence": 0.4}
+
+    return {"answer": "\n\n".join(parts), "intent": "profit", "confidence": 0.9}
+
+
+def _answer_loss(question: str, artifacts: DatasetArtifacts) -> dict:
+    schema = artifacts.schema
+    df     = artifacts.df
+    metrics = artifacts.metrics
+
+    profit_col = schema.get("profit_column")
+
+    if metrics:
+        margin = metrics.get("profit_margin")
+        if margin is not None and float(margin) < 0:
+            return {"answer": f"⚠️ The dataset shows a **net loss** with a profit margin of **{round(float(margin)*100,2)}%**.", "intent": "loss", "confidence": 0.95}
+        if margin is not None and float(margin) >= 0:
+            return {"answer": f"✅ The dataset is **profitable** with a margin of **{round(float(margin)*100,2)}%**. No net loss detected.", "intent": "loss", "confidence": 0.95}
+
+    if df is not None and profit_col and profit_col in df.columns:
+        loss_rows = df[df[profit_col] < 0]
+        total_loss = loss_rows[profit_col].sum()
+        count_loss = len(loss_rows)
         return {
-            "intent": "greeting",
-            "question": question,
-            "answer": answer,
-            "confidence": 1.0
+            "answer": (
+                f"**Loss analysis:**\n"
+                f"  • Loss-making records: **{count_loss:,}**\n"
+                f"  • Total cumulative loss: **{_fmt(total_loss)}**"
+            ),
+            "intent": "loss",
+            "confidence": 0.9
         }
 
-    # ── 1. Guardrails (non-data questions) ────────────────────────────────────
-    guard = check_guardrails(question)
-    if guard:
-        return {"intent": "rejected", "answer": guard, "confidence": "high"}
-        
+    return {"answer": "Loss data could not be computed. No profit column was detected.", "intent": "loss", "confidence": 0.4}
+
+
+def _answer_trend(question: str, artifacts: DatasetArtifacts) -> dict:
+    schema = artifacts.schema
+    df     = artifacts.df
+
+    date_col  = schema.get("date_column")
+    sales_col = _find_target_column(question, schema, df) or schema.get("sales_column")
+
+    if not date_col or df is None:
+        return {"answer": "A date column is required for trend analysis, but none was detected.", "intent": "trend", "confidence": 0.5}
+
+    if date_col not in df.columns:
+        return {"answer": f"The detected date column '{date_col}' is not present in the data.", "intent": "trend", "confidence": 0.4}
+
+    try:
+        ts = df.copy()
+        ts[date_col] = pd.to_datetime(ts[date_col], errors="coerce")
+        ts = ts.dropna(subset=[date_col])
+
+        if re.search(r"\byear\b|\bannual\b", question.lower()):
+            freq, label = "Y", "yearly"
+        elif re.search(r"\bquarter\b|\bq[1-4]\b", question.lower()):
+            freq, label = "Q", "quarterly"
+        else:
+            freq, label = "M", "monthly"
+
+        monthly = ts.set_index(date_col).resample(freq)[sales_col].sum()
+
+        if monthly.empty:
+            return {"answer": "Not enough date data to compute trends.", "intent": "trend", "confidence": 0.5}
+
+        lines = "\n".join(f"  • **{str(idx)[:7]}**: {_fmt(val)}" for idx, val in monthly.tail(12).items())
+
+        # Growth rate
+        if len(monthly) >= 2:
+            first = monthly.iloc[0]
+            last  = monthly.iloc[-1]
+            if first != 0:
+                growth = ((last - first) / abs(first)) * 100
+                growth_str = f"\n\n📈 **Overall growth:** {growth:+.1f}% from {str(monthly.index[0])[:7]} to {str(monthly.index[-1])[:7]}"
+            else:
+                growth_str = ""
+        else:
+            growth_str = ""
+
+        return {
+            "answer": f"**{label.capitalize()} {sales_col} trend:**\n{lines}{growth_str}",
+            "intent": "trend",
+            "confidence": 0.9
+        }
+
+    except Exception as e:
+        logger.warning(f"Trend calculation failed: {e}")
+        return {"answer": "I encountered an error computing the trend. Please verify the date column format.", "intent": "trend", "confidence": 0.4}
+
+
+def _answer_forecast(question: str, artifacts: DatasetArtifacts) -> dict:
+    schema = artifacts.schema
+    df     = artifacts.df
+
+    date_col  = schema.get("date_column")
+    sales_col = schema.get("sales_column")
+
+    if not date_col or not sales_col or df is None:
+        return {"answer": "Forecasting requires both a date column and a sales/revenue column, which could not be detected.", "intent": "forecast", "confidence": 0.4}
+
+    try:
+        ts = df.copy()
+        ts[date_col] = pd.to_datetime(ts[date_col], errors="coerce")
+        ts = ts.dropna(subset=[date_col, sales_col])
+        monthly = ts.set_index(date_col).resample("M")[sales_col].sum()
+
+        if len(monthly) < 2:
+            return {"answer": "Not enough historical data points to make a forecast.", "intent": "forecast", "confidence": 0.5}
+
+        # Simple moving average forecast
+        growth_rate = monthly.pct_change().mean()
+        last_val    = monthly.iloc[-1]
+        next_val    = last_val * (1 + growth_rate)
+
+        last_month  = monthly.index[-1]
+        # Next month
+        next_month  = last_month + pd.DateOffset(months=1)
+
+        direction = "📈 increase" if growth_rate > 0 else "📉 decrease"
+
+        answer = (
+            f"**Forecast for {str(next_month)[:7]}:**\n\n"
+            f"  • Predicted {sales_col}: **{_fmt(next_val)}**\n"
+            f"  • Based on average monthly growth rate of **{growth_rate*100:+.1f}%**\n"
+            f"  • Last recorded ({str(last_month)[:7]}): {_fmt(last_val)}\n\n"
+            f"Trend suggests a {direction} in the next period."
+        )
+        return {"answer": answer, "intent": "forecast", "confidence": 0.8}
+
+    except Exception as e:
+        logger.warning(f"Forecast failed: {e}")
+        return {"answer": "I encountered an error while computing the forecast.", "intent": "forecast", "confidence": 0.4}
+
+
+def _answer_anomaly(artifacts: DatasetArtifacts) -> dict:
+    insights_data = artifacts.insights
+
+    if isinstance(insights_data, dict):
+        all_insights = insights_data.get("insights", [])
+    elif isinstance(insights_data, list):
+        all_insights = insights_data
+    else:
+        all_insights = []
+
+    anomaly_insights = [i for i in all_insights if "anomal" in i.get("type", "").lower() or "outlier" in i.get("description", "").lower()]
+
+    if anomaly_insights:
+        lines = "\n".join(f"  ⚠️ {i['description']}" for i in anomaly_insights)
+        return {"answer": f"**Anomalies detected:**\n{lines}", "intent": "anomaly", "confidence": 0.95}
+
+    # Compute from dataset
+    schema = artifacts.schema
+    df     = artifacts.df
+    sales_col = schema.get("sales_column")
+
+    if df is not None and sales_col and sales_col in df.columns:
+        try:
+            from scipy import stats as sp_stats
+            col_data = df[sales_col].dropna()
+            z_scores = np.abs(sp_stats.zscore(col_data))
+            outlier_count = int((z_scores > 3).sum())
+            if outlier_count > 0:
+                return {
+                    "answer": f"⚠️ **{outlier_count} statistical anomalies** detected in `{sales_col}` (values beyond 3 standard deviations from the mean). These could represent data entry errors or exceptional events.",
+                    "intent": "anomaly",
+                    "confidence": 0.85
+                }
+            else:
+                return {"answer": f"✅ **No significant anomalies** detected in `{sales_col}`. All values are within 3 standard deviations of the mean.", "intent": "anomaly", "confidence": 0.85}
+        except Exception as e:
+            logger.warning(f"Anomaly detection failed: {e}")
+
+    if not all_insights:
+        return {"answer": "No anomaly analysis is available yet. Please ensure the dataset pipeline has completed successfully.", "intent": "anomaly", "confidence": 0.4}
+
+    return {"answer": "✅ No anomalies were detected by the AI analysis engine.", "intent": "anomaly", "confidence": 0.8}
+
+
+def _answer_insights(artifacts: DatasetArtifacts) -> dict:
+    insights_data = artifacts.insights
+
+    if isinstance(insights_data, dict):
+        all_insights = insights_data.get("insights", [])
+        summary      = insights_data.get("summary", "")
+    elif isinstance(insights_data, list):
+        all_insights = insights_data
+        summary      = ""
+    else:
+        all_insights = []
+        summary      = ""
+
+    if not all_insights and not summary:
+        return {"answer": "AI insights are not yet available. Please ensure the dataset pipeline completed successfully.", "intent": "insight", "confidence": 0.5}
+
+    parts = []
+    if summary:
+        parts.append(f"**Summary:** {summary}")
+
+    icon_map = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}
+    for i in all_insights[:8]:
+        sev  = i.get("severity", "info")
+        icon = icon_map.get(sev, "ℹ️")
+        parts.append(f"{icon} {i.get('description', '')}")
+
+    return {"answer": "\n\n".join(parts), "intent": "insight", "confidence": 0.95}
+
+
+def _answer_comparison(question: str, artifacts: DatasetArtifacts) -> dict:
+    """Try to compare two named entities from the question."""
+    schema = artifacts.schema
+    df     = artifacts.df
+
+    # Look for two quoted or capitalized terms
+    matches = re.findall(r'"([^"]+)"', question)
+    if len(matches) < 2:
+        # Try unquoted capitalized words
+        matches = re.findall(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b", question)
+
+    if len(matches) >= 2 and df is not None:
+        a, b = matches[0], matches[1]
+        # Find which column contains these values
+        for col in df.select_dtypes(include=["object", "category"]).columns:
+            col_vals = df[col].astype(str).str.lower()
+            if a.lower() in col_vals.values and b.lower() in col_vals.values:
+                val_col = schema.get("sales_column")
+                if val_col and val_col in df.columns:
+                    a_val = df[df[col].str.lower() == a.lower()][val_col].sum()
+                    b_val = df[df[col].str.lower() == b.lower()][val_col].sum()
+                    winner = a if a_val > b_val else b
+                    return {
+                        "answer": (
+                            f"**Comparison of {a} vs {b} by {val_col}:**\n\n"
+                            f"  • **{a}**: {_fmt(a_val)}\n"
+                            f"  • **{b}**: {_fmt(b_val)}\n\n"
+                            f"🏆 **{winner}** is higher."
+                        ),
+                        "intent": "comparison",
+                        "confidence": 0.85
+                    }
+
+    return {"answer": "Please specify two items to compare, e.g., *\"Compare 'North' vs 'South' region\"*.", "intent": "comparison", "confidence": 0.5}
+
+
+# ─── Helper: Find Target Column ───────────────────────────────────────────────
+
+def _find_target_column(question: str, schema: dict, df: "pd.DataFrame | None") -> str | None:
+    """Try to match a column name mentioned in the question."""
+    q = question.lower()
+
+    # Check schema roles
+    role_keywords = {
+        "sales": ["sales", "revenue", "income"],
+        "profit": ["profit", "margin", "earning"],
+        "cost": ["cost", "expense", "spend"],
+        "quantity": ["quantity", "qty", "units", "volume"],
+        "price": ["price", "rate", "per unit"],
+        "region": ["region", "country", "location"],
+        "product": ["product", "item", "sku"],
+        "customer": ["customer", "client"],
+        "date": ["date", "time", "month"],
+    }
+    for role, keywords in role_keywords.items():
+        if any(kw in q for kw in keywords):
+            schema_key = f"{role}_column"
+            if schema.get(schema_key):
+                return schema.get(schema_key)
+
+    # Try exact column name match
+    if df is not None:
+        for col in df.columns:
+            if col.lower() in q or col.lower().replace("_", " ") in q:
+                return col
+
+    return None
+
+
+# ─── Main Dispatcher ──────────────────────────────────────────────────────────
+
+def answer_question(question: str, artifacts: DatasetArtifacts) -> dict:
+    """Route question to the right handler and return answer dict."""
+    if not artifacts.available:
+        return {
+            "answer": (
+                "⏳ The dataset is still being processed or the artifacts are unavailable. "
+                "Please wait a moment and try again."
+            ),
+            "intent": "unavailable",
+            "confidence": 0.0
+        }
+
     intent = detect_intent(question)
-    confidence = "high"
-    
-    # Pre-load artifacts (Caching Layer)
-    global _ARTIFACT_CACHE
-    cache_key = f"{user_id}_{dataset_id}"
-    
-    if cache_key not in _ARTIFACT_CACHE:
-        _ARTIFACT_CACHE[cache_key] = {}
-        for f in ["kpi_summary.json", "feature_importance.json", "forecast.json", "schema.json", "metrics.json", "insights.json"]:
-            path = os.path.join(dataset_dir, f)
-            if os.path.exists(path):
-                with open(path, 'r') as fp:
-                    _ARTIFACT_CACHE[cache_key][f] = json.load(fp)
-                    
-    artifacts = _ARTIFACT_CACHE[cache_key]
-    answer = None
-    
-    # ── Fast-Path Artifact Routing ──────────────────────────────────────────
 
-    # ──  Dataset Exploration Intents  ──────────────────────────────────────────
-    if intent == "dataset_summary":
-        meta    = {}
-        meta_p  = os.path.join(dataset_dir, "dataset_metadata.json")
-        schema  = artifacts.get("schema.json", {})
-        kpi     = artifacts.get("kpi_summary.json", {})
-        if os.path.exists(meta_p):
-            with open(meta_p) as fh:
-                meta = json.load(fh)
-
-        rows    = meta.get("total_rows", "unknown")
-        cols    = meta.get("total_columns", "unknown")
-        sales_col = schema.get("sales_column", "")
-        date_col  = schema.get("date_column", "")
-        top_product = None
-        product_col = schema.get("product_column")
-        total_sales = None
-
-        try:
-            if "cleaned_data" in artifacts:
-                df_sum = artifacts["cleaned_data"]
-            else:
-                df_sum = pd.read_csv(os.path.join(dataset_dir, "cleaned_data.csv"))
-                artifacts["cleaned_data"] = df_sum
-
-            if sales_col and sales_col in df_sum.columns:
-                total_sales = round(df_sum[sales_col].sum(), 2)
-            if product_col and product_col in df_sum.columns and sales_col in df_sum.columns:
-                top_product = df_sum.groupby(product_col)[sales_col].sum().idxmax()
-        except Exception:
-            pass
-
-        lines = [f"**Dataset Summary**",
-                 f"- Rows: {rows} | Columns: {cols}"]
-        if date_col:
-            lines.append(f"- Date column: {date_col}")
-        if total_sales is not None:
-            lines.append(f"- Total {sales_col}: {total_sales:,}")
-        if top_product:
-            lines.append(f"- Top product: {top_product}")
-        answer = "\n".join(lines)
-
-    elif intent == "list_products":
-        schema     = artifacts.get("schema.json", {})
-        product_col = schema.get("product_column")
-        if product_col:
-            try:
-                if "cleaned_data" in artifacts:
-                    df_p = artifacts["cleaned_data"]
-                else:
-                    df_p = pd.read_csv(os.path.join(dataset_dir, "cleaned_data.csv"))
-                    artifacts["cleaned_data"] = df_p
-
-                if product_col in df_p.columns:
-                    products = sorted(df_p[product_col].dropna().unique().tolist())
-                    answer   = f"**Products in dataset** ({len(products)} unique):\n" + "\n".join(f"- {p}" for p in products[:30])
-                    if len(products) > 30:
-                        answer += f"\n... and {len(products)-30} more."
-                else:
-                    answer = f"Product column '{product_col}' not found in cleaned data."
-            except Exception as e:
-                answer = f"Could not retrieve product list: {e}"
+    try:
+        if intent == "greeting":
+            return _answer_greeting(question)
+        elif intent == "summary":
+            return _answer_summary(artifacts)
+        elif intent == "columns":
+            return _answer_columns(artifacts)
+        elif intent == "rows":
+            return _answer_rows(artifacts)
+        elif intent == "missing":
+            return _answer_missing(artifacts)
+        elif intent in ("total_sales", "total_generic"):
+            return _answer_total(question, artifacts)
+        elif intent == "average":
+            return _answer_average(question, artifacts)
+        elif intent == "maximum":
+            return _answer_max(question, artifacts)
+        elif intent == "minimum":
+            return _answer_min(question, artifacts)
+        elif intent == "count":
+            return _answer_count(question, artifacts)
+        elif intent == "top_n":
+            return _answer_top_n(question, artifacts)
+        elif intent == "region":
+            return _answer_region(question, artifacts)
+        elif intent == "product":
+            return _answer_product(question, artifacts)
+        elif intent == "customer":
+            return _answer_customer(question, artifacts)
+        elif intent == "profit":
+            return _answer_profit(question, artifacts)
+        elif intent == "loss":
+            return _answer_loss(question, artifacts)
+        elif intent == "trend":
+            return _answer_trend(question, artifacts)
+        elif intent == "forecast":
+            return _answer_forecast(question, artifacts)
+        elif intent == "anomaly":
+            return _answer_anomaly(artifacts)
+        elif intent == "insight":
+            return _answer_insights(artifacts)
+        elif intent == "comparison":
+            return _answer_comparison(question, artifacts)
         else:
-            answer = "No product column was detected in this dataset."
+            # Unknown: try a broad keyword search across KPI data
+            kpi = artifacts.kpi
+            if kpi:
+                schema = artifacts.schema
+                target = _find_target_column(question, schema, artifacts.df)
+                if target and target in kpi:
+                    k = kpi[target]
+                    lines = "\n".join(f"  • **{stat}**: {_fmt(val)}" for stat, val in k.items() if stat not in ("column",))
+                    return {"answer": f"**Statistics for {target}:**\n{lines}", "intent": "stats", "confidence": 0.7}
 
-    elif intent == "show_columns":
-        try:
-            if "cleaned_data" in artifacts:
-                df_c = artifacts["cleaned_data"]
-            else:
-                df_c = pd.read_csv(os.path.join(dataset_dir, "cleaned_data.csv"))
-                artifacts["cleaned_data"] = df_c
+            return {
+                "answer": (
+                    "I'm not sure how to answer that. Here are some things you can ask:\n\n"
+                    "• *\"What is the total sales?\"*\n"
+                    "• *\"Show me the top 5 products\"*\n"
+                    "• *\"What are the monthly trends?\"*\n"
+                    "• *\"Give me an overview\"*\n"
+                    "• *\"Are there any anomalies?\"*"
+                ),
+                "intent": "unknown",
+                "confidence": 0.0
+            }
+    except Exception as e:
+        logger.error(f"Answer generation failed for intent '{intent}': {e}", exc_info=True)
+        return {
+            "answer": "I encountered an internal error while processing your question. Please try rephrasing it.",
+            "intent": intent,
+            "confidence": 0.0
+        }
 
-            cols_l = df_c.columns.tolist()
-            answer = f"**Dataset columns** ({len(cols_l)} total):\n" + "\n".join(f"- {c}" for c in cols_l)
-        except Exception as e:
-            answer = f"Could not read dataset columns: {e}"
 
-    elif intent == "dataset_overview":
-        ins = artifacts.get("insights.json", {})
-        if ins:
-            exec_summary = ins.get("executive_summary") or ins.get("summary", "")
-            key_insights = ins.get("insights", [])[:4]
-            answer = f"**Executive Summary**\n{exec_summary}"
-            if key_insights:
-                answer += "\n\n**Key Findings:**\n"
-                answer += "\n".join(f"- [{i.get('severity','').upper()}] {i.get('description','')}" for i in key_insights)
-        else:
-            answer = "No insights report found. The dataset may still be processing."
+# ─── CLI Entry Point ──────────────────────────────────────────────────────────
 
-    # ── Analytical Artifact Routing ──────────────────────────────────────────
-    elif intent == "root_cause" and "kpi_summary.json" in artifacts:
-        rca = artifacts["kpi_summary.json"].get("root_cause_analysis", {})
-        major_factors = rca.get("major_contributing_factors", [])
-        if major_factors:
-            answer = "Based on Root Cause Analysis:\n" + "\n".join([f"- {m}" for m in major_factors])
+def main():
+    parser = argparse.ArgumentParser(description="Dataset Q&A Query Engine")
+    parser.add_argument("--user_id",    default="default_user")
+    parser.add_argument("--dataset_id", required=True)
+    parser.add_argument("--question",   required=True)
+    parser.add_argument("--dataset_dir", default=None,
+                        help="Override dataset artifact directory (optional)")
+    args = parser.parse_args()
 
-    elif intent == "feature_importance" and "feature_importance.json" in artifacts:
-        fi = artifacts["feature_importance.json"].get("importance", {})
-        top_3 = list(fi.items())[:3]
-        if top_3:
-            answer = f"The factors having the highest impact on {artifacts.get('schema.json', {}).get('target_column', 'the target')} are:\n"
-            answer += "\n".join([f"- {k} (Score: {round(v, 4)})" for k, v in top_3])
-            
-    elif intent == "recommendation" and "kpi_summary.json" in artifacts:
-        recs = artifacts["kpi_summary.json"].get("recommendations", [])
-        if recs:
-            answer = "Based on current data patterns, I recommend:\n" + "\n".join([f"- {r}" for r in recs])
-            
-    elif intent == "trend_analysis" and "forecast.json" in artifacts:
-        fc = artifacts["forecast.json"]
-        if fc.get("forecast"):
-            next_val = fc["forecast"][0]
-            answer = f"The predicted {fc.get('target', 'value')} for the next period is {next_val:.2f}."
-            
-    elif intent == "analyst_summary" and "insights.json" in artifacts:
-        ins = artifacts["insights.json"]
-        answer = ins.get("summary", "Analysis completed.") + "\n\nKey Insights:\n"
-        for i in ins.get("insights", [])[:3]:
-            answer += f"- [{i['severity'].upper()}] {i['description']}\n"
-            
-    # Semantic Metric Fast-Path
-    elif intent == "aggregation" and "metrics.json" in artifacts:
-        metrics = artifacts["metrics.json"]
-        q_lower = str(question).lower()
-        if "profit margin" in q_lower and "profit_margin" in metrics:
-            answer = f"The profit margin is {round(metrics['profit_margin'] * 100, 2)}%."
-        elif "revenue" in q_lower and "total_revenue" in metrics:
-            answer = f"The total revenue is {metrics['total_revenue']}."
-        elif "cost" in q_lower and "total_cost" in metrics:
-            answer = f"The total cost is {metrics['total_cost']}."
+    dataset_dir = args.dataset_dir or resolve_dataset_dir(args.user_id, args.dataset_id)
 
-    # Deep Pandas Fallback query execution
-    if not answer:
-        try:
-            if "cleaned_data" in artifacts:
-                df = artifacts["cleaned_data"]
-            else:
-                df = pd.read_csv(os.path.join(dataset_dir, "cleaned_data.csv"))
-                artifacts["cleaned_data"] = df
+    artifacts = DatasetArtifacts(dataset_dir)
+    result    = answer_question(args.question, artifacts)
 
-            schema = artifacts.get("schema.json", {})
-            sales_col = schema.get("sales_column", df.columns[-1])
-            date_col = schema.get("date_column")
-            
-            # Extract column entities from the question using NLP String Matching
-            entities = extract_entities(question, df.columns.tolist())
-            target_col = entities[0] if entities else sales_col
-            
-            q_lower = str(question).lower()
-            
-            # Template 1: Basic Aggregation
-            if intent == "aggregation":
-                if "minimum" in q_lower:
-                    answer = f"The minimum value of {target_col} is {df[target_col].min()}."
-                elif "maximum" in q_lower:
-                    answer = f"The maximum value of {target_col} is {df[target_col].max()}."
-                elif "average" in q_lower:
-                    answer = f"The average value of {target_col} is {df[target_col].mean():.2f}."
-                elif "total" in q_lower or "sum" in q_lower:
-                    answer = f"The total sum of {target_col} is {df[target_col].sum():.2f}."
-                    
-            # Template 2: Comparison
-            elif intent == "comparison" and len(entities) >= 1:
-                cat_cols = df.select_dtypes(include=['object']).columns.tolist()
-                cat_col = cat_cols[0] if cat_cols else None
-                if cat_col:
-                    grouped = df.groupby(cat_col)[target_col].sum().sort_values(ascending=False)
-                    if len(grouped) >= 2:
-                        answer = f"Comparing {target_col} by {cat_col}:\n1. {grouped.index[0]}: {grouped.iloc[0]:.2f}\n2. {grouped.index[1]}: {grouped.iloc[1]:.2f}"
-            
-            # Template 3: Filtering
-            elif intent == "filtering" and len(entities) >= 1:
-                cat_cols = df.select_dtypes(include=['object']).columns.tolist()
-                filter_col = cat_cols[0] if cat_cols else entities[0]
-                val_counts = df[filter_col].value_counts()
-                if not val_counts.empty:
-                    top_val = val_counts.index[0]
-                    filtered_df = df[df[filter_col] == top_val]
-                    answer = f"Filtering where {filter_col} = '{top_val}': The total {target_col} is {filtered_df[target_col].sum():.2f} across {len(filtered_df)} records."
+    # Single JSON line to stdout — Node.js parses this
+    print(json.dumps(result, ensure_ascii=False))
 
-            # Template 4: Top Performers
-            elif intent == "top_performers":
-                cat_cols = df.select_dtypes(include=['object']).columns.tolist()
-                cat_col = next((c for c in cat_cols if df[c].nunique() < 50), cat_cols[0] if cat_cols else None)
-                if cat_col:
-                    top5 = df.groupby(cat_col)[target_col].sum().sort_values(ascending=False).head(5)
-                    answer = f"**Top 5 by {target_col}:**\n"
-                    for rank, (name, val) in enumerate(top5.items(), 1):
-                        answer += f"{rank}. {name}: {val:,.2f}\n"
-
-            # Template 5: Bottom Performers
-            elif intent == "bottom_performers":
-                cat_cols = df.select_dtypes(include=['object']).columns.tolist()
-                cat_col = next((c for c in cat_cols if df[c].nunique() < 50), cat_cols[0] if cat_cols else None)
-                if cat_col:
-                    bottom5 = df.groupby(cat_col)[target_col].sum().sort_values(ascending=True).head(5)
-                    answer = f"**Bottom 5 by {target_col}:**\n"
-                    for rank, (name, val) in enumerate(bottom5.items(), 1):
-                        answer += f"{rank}. {name}: {val:,.2f}\n"
-
-            # Template 6: Count By Category
-            elif intent == "count_by_category":
-                cat_cols = df.select_dtypes(include=['object']).columns.tolist()
-                cat_col = next((c for c in cat_cols if df[c].nunique() < 50), cat_cols[0] if cat_cols else None)
-                if cat_col:
-                    counts = df[cat_col].value_counts().head(10)
-                    answer = f"**Record count by {cat_col}:**\n"
-                    for name, cnt in counts.items():
-                        answer += f"- {name}: {cnt:,} records\n"
-
-            # Template 7: Average By Category
-            elif intent == "average_by_category":
-                cat_cols = df.select_dtypes(include=['object']).columns.tolist()
-                cat_col = next((c for c in cat_cols if df[c].nunique() < 50), cat_cols[0] if cat_cols else None)
-                if cat_col:
-                    avgs = df.groupby(cat_col)[target_col].mean().sort_values(ascending=False).head(8)
-                    answer = f"**Average {target_col} by {cat_col}:**\n"
-                    for name, avg in avgs.items():
-                        answer += f"- {name}: {avg:,.2f}\n"
-
-            # Template 8: Monthly Breakdown
-            elif intent == "monthly_breakdown":
-                if date_col and date_col in df.columns:
-                    tmp = df.copy()
-                    tmp[date_col] = pd.to_datetime(tmp[date_col], errors='coerce')
-                    tmp['_month'] = tmp[date_col].dt.to_period('M').astype(str)
-                    monthly = tmp.groupby('_month')[target_col].sum().sort_index().tail(12)
-                    answer = f"**Monthly {target_col} (last 12 months):**\n"
-                    for period, val in monthly.items():
-                        answer += f"- {period}: {val:,.2f}\n"
-                else:
-                    answer = "No date column detected. Cannot compute monthly breakdown."
-
-            # Template 9: Daily Breakdown
-            elif intent == "daily_breakdown":
-                if date_col and date_col in df.columns:
-                    tmp = df.copy()
-                    tmp[date_col] = pd.to_datetime(tmp[date_col], errors='coerce')
-                    tmp['_day'] = tmp[date_col].dt.date.astype(str)
-                    daily = tmp.groupby('_day')[target_col].sum().sort_index().tail(14)
-                    answer = f"**Daily {target_col} (last 14 days):**\n"
-                    for day, val in daily.items():
-                        answer += f"- {day}: {val:,.2f}\n"
-                else:
-                    answer = "No date column detected. Cannot compute daily breakdown."
-
-            # Template 10: Date Range Info
-            elif intent == "date_range_info":
-                if date_col and date_col in df.columns:
-                    dates = pd.to_datetime(df[date_col], errors='coerce').dropna()
-                    if len(dates):
-                        answer = (f"**Date range in dataset:**\n"
-                                  f"- Earliest: {dates.min().date()}\n"
-                                  f"- Latest:   {dates.max().date()}\n"
-                                  f"- Span: {(dates.max() - dates.min()).days} days")
-                    else:
-                        answer = "Could not parse date column."
-                else:
-                    answer = "No date column detected in this dataset."
-
-            # Template 11: Profit Analysis
-            elif intent == "profit_analysis":
-                profit_candidates = [c for c in df.columns if 'profit' in str(c).lower() or 'margin' in str(c).lower()]
-                if profit_candidates:
-                    pc = profit_candidates[0]
-                    total_p = df[pc].sum()
-                    avg_p   = df[pc].mean()
-                    answer  = (f"**Profit Analysis ({pc}):**\n"
-                               f"- Total Profit: {total_p:,.2f}\n"
-                               f"- Average Profit per Row: {avg_p:,.2f}\n"
-                               f"- Max: {df[pc].max():,.2f} | Min: {df[pc].min():,.2f}")
-                elif sales_col in df.columns:
-                    answer = f"No explicit profit column found. Total {sales_col}: {df[sales_col].sum():,.2f}"
-
-            # Template 12: Data Quality
-            elif intent == "data_quality":
-                missing = df.isnull().sum()
-                missing = missing[missing > 0]
-                if missing.empty:
-                    answer = "Great news! This dataset has **no missing values**."
-                else:
-                    answer = f"**Missing values by column:**\n"
-                    for col, cnt in missing.sort_values(ascending=False).head(10).items():
-                        pct = 100 * cnt / len(df)
-                        answer += f"- {col}: {cnt:,} missing ({pct:.1f}%)\n"
-
-            # Template 13: Distribution
-            elif intent == "distribution":
-                if pd.api.types.is_numeric_dtype(df[target_col]):
-                    s = df[target_col].dropna()
-                    answer = (f"**Distribution of {target_col}:**\n"
-                              f"- Min:    {s.min():,.2f}\n"
-                              f"- Max:    {s.max():,.2f}\n"
-                              f"- Mean:   {s.mean():,.2f}\n"
-                              f"- Median: {s.median():,.2f}\n"
-                              f"- Std Dev:{s.std():,.2f}")
-            
-            if not answer:
-                answer = f"I scanned the dataset but could not confidently execute a specific query for this question. Try asking about {target_col} totals or averages."
-                confidence = "low"
-                
-        except Exception as e:
-            logger.error(f"Fallback computation failed: {str(e)}")
-            answer = "Sorry, an error occurred while computing the answer directly from the dataset."
-            confidence = "low"
-
-    # Log query output safely using filelock
-    log_dir = os.path.join(base_dir, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, "query_logs.json")
-    
-    log_entry = {
-        "user_id": user_id,
-        "dataset_id": dataset_id,
-        "question": question,
-        "intent": intent,
-        "timestamp": datetime.datetime.now().isoformat(),
-        "answer_preview": str(answer)[:100]
-    }
-    
-    logs = []
-    if os.path.exists(log_path):
-        try:
-            with open(log_path, 'r') as f:
-                logs = json.load(f)
-        except: pass
-    logs.append(log_entry)
-    with FileLock(log_path + ".lock"):
-        with open(log_path, 'w') as f:
-            json.dump(logs, f, indent=4)
-        
-    logger.info(f"Query executed. Intent: {intent}")
-    return {
-        "intent": intent, 
-        "question": question, 
-        "answer": answer, 
-        "confidence": confidence
-    }
 
 if __name__ == "__main__":
-    import argparse
-    import sys
-    parser = argparse.ArgumentParser(description="Run the DataInsights.ai Query Engine")
-    parser.add_argument("--user_id", type=str, default="default_user", help="Organizational User ID")
-    parser.add_argument("--dataset_id", type=str, required=True, help="Dataset ID to query")
-    parser.add_argument("--question", type=str, required=True, help="User question to answer")
-    
-    args = parser.parse_args()
-    
-    try:
-        res = execute_query(args.user_id, args.dataset_id, args.question)
-        output = json.dumps(res)
-        # Force UTF-8 encoding for reliable cross-platform piping
-        sys.stdout.buffer.write(output.encode('utf-8'))
-        sys.stdout.buffer.flush()
-    except Exception as e:
-        sys.stderr.write(str(e))
-        err_res = json.dumps({"error": str(e), "answer": "An error occurred in the query engine.", "intent": "error"})
-        sys.stdout.buffer.write(err_res.encode('utf-8'))
-        sys.stdout.buffer.flush()
-    
-    # Force exit to prevent any subsequent prints from libraries or cleanup
-    os._exit(0)
+    main()
