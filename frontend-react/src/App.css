@@ -1,0 +1,5 @@
+/* App-level styles - mostly handled by index.css and component styles */
+#root {
+  width: 100%;
+  min-height: 100vh;
+}

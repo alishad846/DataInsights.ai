@@ -1,0 +1,1381 @@
+/* ═════════════════════════════════════════════════════════════
+   Employee Portal - Premium Dark Theme
+   ═════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ─────────────────────────────────────────────────────────────
+   Layout & Containers
+   ───────────────────────────────────────────────────────────── */
+
+.emp-layout {
+    display: flex;
+    min-height: 100vh;
+    background: #0d1117;
+    position: relative;
+}
+
+.emp-layout::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-image: 
+        radial-gradient(circle at 20% 30%, rgba(88, 166, 255, 0.05) 0%, transparent 40%),
+        radial-gradient(circle at 80% 70%, rgba(188, 140, 255, 0.04) 0%, transparent 40%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Sidebar */
+.emp-sidebar {
+    width: 260px;
+    background: linear-gradient(180deg, rgba(22, 27, 34, 0.98) 0%, rgba(13, 17, 23, 0.98) 100%);
+    border-right: 1px solid rgba(48, 54, 61, 0.6);
+    padding: 1.5rem 1rem;
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    z-index: 100;
+    overflow: hidden;
+    backdrop-filter: blur(12px);
+}
+
+.emp-sidebar-logo {
+    padding: 0 0.75rem;
+    margin-bottom: 2rem;
+}
+
+.emp-sidebar-logo h2 {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.02em;
+}
+
+.emp-sidebar-logo p {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: rgba(139, 148, 158, 0.7);
+    margin-top: 0.25rem;
+    letter-spacing: 0.5px;
+}
+
+/* Navigation */
+.emp-nav {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.emp-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border-radius: 10px;
+    color: rgba(139, 148, 158, 0.8);
+    text-decoration: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.emp-nav-item::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 0;
+    background: #58a6ff;
+    border-radius: 0 3px 3px 0;
+    transition: height 0.2s ease;
+}
+
+.emp-nav-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.emp-nav-item.active {
+    background: rgba(88, 166, 255, 0.1);
+    color: #58a6ff;
+}
+
+.emp-nav-item.active::before {
+    height: 60%;
+}
+
+.emp-nav-item svg {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+}
+
+/* User section */
+.emp-user-section {
+    border-top: 1px solid rgba(48, 54, 61, 0.6);
+    padding-top: 1rem;
+    margin-top: 1rem;
+}
+
+.emp-user-card {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem;
+    border-radius: 10px;
+    transition: background 0.2s;
+    cursor: pointer;
+}
+
+.emp-user-card:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.emp-user-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #1f6feb 0%, #58a6ff 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: 600;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px rgba(88, 166, 255, 0.3);
+}
+
+.emp-user-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.emp-user-name {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.emp-user-role {
+    font-size: 0.7rem;
+    color: rgba(139, 148, 158, 0.7);
+}
+
+.emp-logout-btn {
+    background: none;
+    border: none;
+    color: rgba(139, 148, 158, 0.5);
+    cursor: pointer;
+    padding: 0.25rem;
+    transition: color 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.emp-logout-btn:hover {
+    color: #f85149;
+}
+
+/* Main Content */
+.emp-main {
+    margin-left: 260px;
+    flex: 1;
+    padding: 2rem;
+    overflow: auto;
+    position: relative;
+    z-index: 1;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Topbar
+   ───────────────────────────────────────────────────────────── */
+
+.emp-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid rgba(48, 54, 61, 0.4);
+    animation: fadeSlideDown 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fadeSlideDown {
+    0% {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.emp-topbar-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -0.02em;
+}
+
+.emp-topbar-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: rgba(139, 148, 158, 0.8);
+    margin-top: 0.25rem;
+}
+
+.emp-topbar-actions {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+/* Search Bar */
+.emp-search-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: rgba(22, 27, 34, 0.8);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 10px;
+    padding: 0.5rem 0.75rem;
+    min-width: 240px;
+    transition: all 0.2s;
+}
+
+.emp-search-bar:focus-within {
+    border-color: rgba(88, 166, 255, 0.5);
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.1);
+}
+
+.emp-search-bar svg {
+    color: rgba(139, 148, 158, 0.5);
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+}
+
+.emp-search-bar input {
+    border: none;
+    background: transparent;
+    font-size: 0.85rem;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    outline: none;
+    width: 100%;
+}
+
+.emp-search-bar input::placeholder {
+    color: rgba(139, 148, 158, 0.5);
+}
+
+/* Content area */
+.emp-content {
+    animation: contentFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes contentFadeIn {
+    0% {
+        opacity: 0;
+        transform: translateY(15px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Buttons
+   ───────────────────────────────────────────────────────────── */
+
+.emp-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    font-family: 'Inter', sans-serif;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    border: none;
+    text-decoration: none;
+}
+
+.emp-btn-primary {
+    background: linear-gradient(135deg, #1f6feb 0%, #58a6ff 100%);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(88, 166, 255, 0.25);
+}
+
+.emp-btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(88, 166, 255, 0.35);
+}
+
+.emp-btn-primary:active {
+    transform: translateY(0);
+}
+
+.emp-btn-ghost {
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(139, 148, 158, 0.9);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+}
+
+.emp-btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.emp-btn-sm {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.75rem;
+}
+
+.emp-btn-danger {
+    background: rgba(248, 81, 73, 0.15);
+    color: #f85149;
+    border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+.emp-btn-danger:hover {
+    background: rgba(248, 81, 73, 0.25);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Glass Panel (shared component)
+   ───────────────────────────────────────────────────────────── */
+
+.glass-panel {
+    background: linear-gradient(135deg, rgba(22, 27, 34, 0.8) 0%, rgba(22, 27, 34, 0.6) 100%);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 16px;
+    box-shadow: 
+        0 8px 32px rgba(0, 0, 0, 0.3),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-panel:hover {
+    border-color: rgba(88, 166, 255, 0.2);
+    box-shadow: 
+        0 12px 40px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Cards & Grid Items
+   ───────────────────────────────────────────────────────────── */
+
+.emp-card {
+    background: linear-gradient(135deg, rgba(22, 27, 34, 0.85) 0%, rgba(22, 27, 34, 0.65) 100%);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 14px;
+    padding: 1.25rem;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+}
+
+.emp-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(88, 166, 255, 0.2), transparent);
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.emp-card:hover {
+    transform: translateY(-4px) scale(1.01);
+    border-color: rgba(88, 166, 255, 0.3);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+}
+
+.emp-card:hover::before {
+    opacity: 1;
+}
+
+/* Card header */
+.emp-card-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+.emp-card-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    flex-shrink: 0;
+}
+
+.emp-card-icon.csv {
+    background: rgba(63, 185, 80, 0.15);
+}
+
+.emp-card-icon.xlsx {
+    background: rgba(88, 166, 255, 0.15);
+}
+
+.emp-card-icon.json {
+    background: rgba(210, 153, 34, 0.15);
+}
+
+.emp-card-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #fff;
+    line-height: 1.3;
+}
+
+.emp-card-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(139, 148, 158, 0.7);
+    margin-top: 0.2rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.emp-card-meta-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #3fb950;
+}
+
+/* Status badges */
+.emp-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 20px;
+}
+
+.emp-status-badge.ready {
+    background: rgba(63, 185, 80, 0.1);
+    color: #3fb950;
+}
+
+.emp-status-badge.cleaning {
+    background: rgba(210, 153, 34, 0.1);
+    color: #d29922;
+}
+
+.emp-status-badge.new {
+    background: rgba(139, 148, 158, 0.1);
+    color: rgba(139, 148, 158, 0.8);
+}
+
+.emp-status-badge.no-access {
+    background: rgba(248, 81, 73, 0.1);
+    color: #f85149;
+}
+
+/* Meta chips */
+.emp-chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(139, 148, 158, 0.7);
+    background: rgba(255, 255, 255, 0.04);
+    padding: 0.2rem 0.5rem;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+/* Progress bar */
+.emp-progress {
+    height: 3px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.emp-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #1f6feb, #58a6ff);
+    border-radius: 3px;
+    transition: width 1s ease;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Stats & KPIs
+   ───────────────────────────────────────────────────────────── */
+
+.emp-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.emp-stat-card {
+    background: linear-gradient(135deg, rgba(22, 27, 34, 0.85) 0%, rgba(22, 27, 34, 0.65) 100%);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 14px;
+    padding: 1.25rem;
+    position: relative;
+    overflow: hidden;
+    animation: cardFadeUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.emp-stat-card:nth-child(1) { animation-delay: 0.04s; }
+.emp-stat-card:nth-child(2) { animation-delay: 0.08s; }
+.emp-stat-card:nth-child(3) { animation-delay: 0.12s; }
+.emp-stat-card:nth-child(4) { animation-delay: 0.16s; }
+
+@keyframes cardFadeUp {
+    0% {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.emp-stat-icon {
+    font-size: 1.25rem;
+    margin-bottom: 0.75rem;
+    display: block;
+}
+
+.emp-stat-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #fff;
+    line-height: 1;
+}
+
+.emp-stat-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(139, 148, 158, 0.7);
+    margin-top: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.emp-stat-delta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    margin-top: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.emp-stat-delta.up {
+    color: #3fb950;
+}
+
+.emp-stat-delta.down {
+    color: #f85149;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Insights Panel
+   ───────────────────────────────────────────────────────────── */
+
+.emp-insights {
+    margin-bottom: 0.5rem;
+}
+
+.emp-insights-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.emp-insights-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 0.75rem;
+}
+
+.emp-insight-card {
+    background: linear-gradient(135deg, rgba(22, 27, 34, 0.8) 0%, rgba(22, 27, 34, 0.6) 100%);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 12px;
+    padding: 0.875rem 1rem;
+    animation: cardFadeUp 0.4s ease both;
+}
+
+.emp-insight-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: #58a6ff;
+    background: rgba(88, 166, 255, 0.08);
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+    display: inline-block;
+    margin-bottom: 0.5rem;
+}
+
+.emp-insight-text {
+    font-size: 0.8rem;
+    color: rgba(201, 209, 217, 0.9);
+    line-height: 1.6;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Chat CTA Banner
+   ───────────────────────────────────────────────────────────── */
+
+.emp-chat-cta {
+    background: linear-gradient(135deg, rgba(88, 166, 255, 0.08) 0%, rgba(188, 140, 255, 0.05) 100%);
+    border: 1px solid rgba(88, 166, 255, 0.2);
+    border-radius: 12px;
+    padding: 1.125rem 1.375rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1.25rem;
+    animation: cardFadeUp 0.5s ease 0.2s both;
+}
+
+.emp-chat-cta-icon {
+    font-size: 1.75rem;
+}
+
+.emp-chat-cta-content {
+    flex: 1;
+}
+
+.emp-chat-cta-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 0.2rem;
+}
+
+.emp-chat-cta-subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(139, 148, 158, 0.7);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Dataset Selector
+   ───────────────────────────────────────────────────────────── */
+
+.emp-dataset-selector {
+    display: flex;
+    gap: 0.625rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.emp-dataset-chip {
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    cursor: pointer;
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    background: rgba(22, 27, 34, 0.7);
+    color: rgba(139, 148, 158, 0.8);
+    transition: all 0.15s;
+}
+
+.emp-dataset-chip:hover {
+    border-color: rgba(88, 166, 255, 0.3);
+    color: #fff;
+}
+
+.emp-dataset-chip.active {
+    border-color: #58a6ff;
+    background: rgba(88, 166, 255, 0.08);
+    color: #58a6ff;
+}
+
+.emp-dataset-chip.cleaning {
+    color: #d29922;
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Charts Container
+   ───────────────────────────────────────────────────────────── */
+
+.emp-charts-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.emp-chart-card {
+    background: linear-gradient(135deg, rgba(22, 27, 34, 0.85) 0%, rgba(22, 27, 34, 0.65) 100%);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 14px;
+    padding: 1.125rem 1.25rem;
+}
+
+.emp-chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.emp-chart-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #fff;
+}
+
+.emp-chart-subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(139, 148, 158, 0.7);
+    margin-top: 0.125rem;
+}
+
+.emp-chart-wide {
+    grid-column: span 2;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Connection Banner
+   ───────────────────────────────────────────────────────────── */
+
+.emp-connection-banner {
+    background: rgba(22, 27, 34, 0.7);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 12px;
+    padding: 0.875rem 1.25rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+    animation: fadeSlideDown 0.4s ease;
+}
+
+.emp-connection-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #3fb950;
+    box-shadow: 0 0 8px #3fb950;
+    flex-shrink: 0;
+    animation: connectionPulse 2s ease-in-out infinite;
+}
+
+@keyframes connectionPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(0.9); }
+}
+
+.emp-connection-info {
+    flex: 1;
+}
+
+.emp-connection-main {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: rgba(201, 209, 217, 0.9);
+}
+
+.emp-connection-main strong {
+    color: #3fb950;
+}
+
+.emp-connection-sub {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: rgba(139, 148, 158, 0.7);
+    margin-top: 0.125rem;
+}
+
+.emp-connection-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Filters
+   ───────────────────────────────────────────────────────────── */
+
+.emp-filters {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.emp-filter-select {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    padding: 0.4rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    background: rgba(22, 27, 34, 0.7);
+    color: rgba(201, 209, 217, 0.9);
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.emp-filter-select:focus {
+    border-color: rgba(88, 166, 255, 0.5);
+}
+
+.emp-filter-divider {
+    width: 1px;
+    height: 20px;
+    background: rgba(48, 54, 61, 0.8);
+    margin: 0 0.25rem;
+}
+
+.emp-filter-count {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(139, 148, 158, 0.7);
+    margin-left: auto;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Dataset Grid
+   ───────────────────────────────────────────────────────────── */
+
+.emp-dataset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 1rem;
+}
+
+/* Loading skeleton */
+.emp-skeleton {
+    padding: 1.25rem;
+    background: linear-gradient(135deg, rgba(22, 27, 34, 0.8) 0%, rgba(22, 27, 34, 0.6) 100%);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 14px;
+    animation: cardFadeUp 0.5s ease both;
+}
+
+.emp-skeleton-title {
+    width: 60%;
+    height: 16px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 4px;
+    margin-bottom: 0.75rem;
+}
+
+.emp-skeleton-sub {
+    width: 40%;
+    height: 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 4px;
+    margin-bottom: 1.25rem;
+}
+
+.emp-skeleton-chips {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.emp-skeleton-chip {
+    width: 60px;
+    height: 20px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 4px;
+}
+
+/* Empty state */
+.emp-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 4rem 1.5rem;
+}
+
+.emp-empty-icon {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+.emp-empty-title {
+    color: rgba(139, 148, 158, 0.8);
+    margin-bottom: 0.375rem;
+    font-size: 1rem;
+}
+
+.emp-empty-subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: rgba(139, 148, 158, 0.6);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Modal
+   ───────────────────────────────────────────────────────────── */
+
+.emp-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(4px);
+    z-index: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: modalFadeIn 0.2s ease;
+}
+
+@keyframes modalFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.emp-modal {
+    width: 90vw;
+    max-width: 1100px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: modalSlideUp 0.25s ease;
+}
+
+@keyframes modalSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.98);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.emp-modal-header {
+    padding: 1.125rem 1.5rem;
+    border-bottom: 1px solid rgba(48, 54, 61, 0.8);
+    display: flex;
+    align-items: center;
+    gap: 0.875rem;
+}
+
+.emp-modal-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: #fff;
+    flex: 1;
+}
+
+.emp-modal-subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(139, 148, 158, 0.7);
+    margin-top: 0.125rem;
+}
+
+.emp-modal-info {
+    padding: 0.75rem 1.5rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid rgba(48, 54, 61, 0.8);
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.emp-modal-info-item {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(139, 148, 158, 0.7);
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.emp-modal-body {
+    flex: 1;
+    overflow: auto;
+}
+
+.emp-modal-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+}
+
+.emp-modal-table th {
+    background: rgba(13, 17, 23, 0.95);
+    padding: 0.625rem 0.875rem;
+    text-align: left;
+    color: rgba(139, 148, 158, 0.8);
+    font-size: 0.65rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    border-bottom: 1px solid rgba(48, 54, 61, 0.8);
+    position: sticky;
+    top: 0;
+    white-space: nowrap;
+}
+
+.emp-modal-table td {
+    padding: 0.625rem 0.875rem;
+    color: rgba(139, 148, 158, 0.8);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.025);
+    white-space: nowrap;
+}
+
+.emp-modal-table tr {
+    transition: background 0.15s;
+}
+
+.emp-modal-table tr:hover td {
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.emp-modal-footer {
+    padding: 0.875rem 1.5rem;
+    border-top: 1px solid rgba(48, 54, 61, 0.8);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: rgba(13, 17, 23, 0.95);
+}
+
+.emp-modal-footer-info {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(139, 148, 158, 0.7);
+}
+
+.emp-modal-footer-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Version History
+   ───────────────────────────────────────────────────────────── */
+
+.emp-version-history {
+    border-top: 1px solid rgba(48, 54, 61, 0.8);
+    background: rgba(255, 255, 255, 0.02);
+    padding: 0.75rem 1.25rem;
+}
+
+.emp-version-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(139, 148, 158, 0.7);
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 0.5rem;
+}
+
+.emp-version-item {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.375rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.025);
+    font-size: 0.75rem;
+}
+
+.emp-version-item:last-child {
+    border-bottom: none;
+}
+
+.emp-version-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: #58a6ff;
+    background: rgba(88, 166, 255, 0.08);
+    padding: 0.125rem 0.4rem;
+    border-radius: 5px;
+}
+
+.emp-version-desc {
+    color: rgba(201, 209, 217, 0.9);
+}
+
+.emp-version-status {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: #3fb950;
+    margin-left: auto;
+}
+
+.emp-version-date {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: rgba(139, 148, 158, 0.6);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Cleaning Mode Banner
+   ───────────────────────────────────────────────────────────── */
+
+.emp-cleaning-banner {
+    background: linear-gradient(135deg, rgba(210, 153, 34, 0.06), rgba(210, 153, 34, 0.02));
+    border: 1px solid rgba(210, 153, 34, 0.2);
+    border-radius: 16px;
+    padding: 3rem;
+    text-align: center;
+    margin-bottom: 1.5rem;
+    animation: cardFadeUp 0.4s ease;
+}
+
+.emp-cleaning-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    animation: iconFloat 3s ease-in-out infinite;
+}
+
+@keyframes iconFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+
+.emp-cleaning-title {
+    font-size: 1.375rem;
+    font-weight: 600;
+    color: #d29922;
+    margin-bottom: 0.5rem;
+}
+
+.emp-cleaning-info {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    color: rgba(139, 148, 158, 0.8);
+    line-height: 1.8;
+}
+
+.emp-cleaning-highlight {
+    color: #58a6ff;
+}
+
+.emp-cleaning-progress {
+    margin: 1.25rem auto;
+    max-width: 400px;
+}
+
+.emp-cleaning-step {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: #d29922;
+    margin-bottom: 0.25rem;
+    display: flex;
+    justify-content: space-between;
+}
+
+.emp-cleaning-progress-bar {
+    height: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.emp-cleaning-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #d29922, #fcd34d);
+    border-radius: 6px;
+    animation: progressMove 2s ease-in-out infinite alternate;
+}
+
+@keyframes progressMove {
+    from { width: 35%; }
+    to { width: 55%; }
+}
+
+.emp-cleaning-progress-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
+    color: rgba(139, 148, 158, 0.6);
+    margin-top: 0.375rem;
+    text-align: right;
+}
+
+.emp-cleaning-actions {
+    display: flex;
+    gap: 0.625rem;
+    justify-content: center;
+    margin-top: 1.25rem;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Responsive Design
+   ───────────────────────────────────────────────────────────── */
+
+@media (max-width: 1024px) {
+    .emp-sidebar {
+        width: 220px;
+    }
+    
+    .emp-charts-row {
+        grid-template-columns: 1fr;
+    }
+    
+    .emp-chart-wide {
+        grid-column: span 1;
+    }
+    
+    .emp-dataset-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    .emp-layout {
+        flex-direction: column;
+    }
+    
+    .emp-sidebar {
+        width: 100%;
+        flex-direction: row;
+        align-items: center;
+        padding: 1rem;
+        border-right: none;
+        border-bottom: 1px solid rgba(48, 54, 61, 0.6);
+    }
+    
+    .emp-sidebar-logo {
+        margin-bottom: 0;
+        margin-right: 1rem;
+    }
+    
+    .emp-nav {
+        flex-direction: row;
+        overflow-x: auto;
+        gap: 0.5rem;
+    }
+    
+    .emp-nav-item {
+        padding: 0.5rem 0.75rem;
+        white-space: nowrap;
+    }
+    
+    .emp-user-section {
+        border-top: none;
+        border-left: 1px solid rgba(48, 54, 61, 0.6);
+        padding-top: 0;
+        padding-left: 1rem;
+        margin-top: 0;
+        margin-left: 1rem;
+    }
+    
+    .emp-main {
+        padding: 1rem;
+    }
+    
+    .emp-topbar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+    
+    .emp-topbar-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+    
+    .emp-search-bar {
+        width: 100%;
+        min-width: auto;
+    }
+    
+    .emp-connection-banner {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .emp-connection-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+}
+
+@media (max-width: 480px) {
+    .emp-stats-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .emp-filters {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .emp-filter-divider {
+        display: none;
+    }
+    
+    .emp-filter-count {
+        margin-left: 0;
+        margin-top: 0.5rem;
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Demo Toggle Button (for testing)
+   ───────────────────────────────────────────────────────────── */
+
+.emp-demo-toggle {
+    position: fixed;
+    bottom: 1.25rem;
+    right: 1.25rem;
+    z-index: 100;
+}
+
+.emp-demo-toggle .emp-btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+}

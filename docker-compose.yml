@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  backend-ai:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - MONGO_URI=mongodb://mongo:27017/datainsights
+      - REDIS_URI=redis://redis:6379
+      - JWT_SECRET=super_secure_jwt_secret_for_production
+    depends_on:
+      - mongo
+      - redis
+    volumes:
+      - ./backend-node/uploads:/app/backend-node/uploads
+      - ./ml_engine/data:/app/ml_engine/data
+
+  mongo:
+    image: mongo:6
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  mongo_data:

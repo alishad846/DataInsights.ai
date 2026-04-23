@@ -1,0 +1,93 @@
+/* background */
+.role-container {
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #2bbbad;
+    font-family: 'Segoe UI', sans-serif;
+}
+
+/* main card */
+.role-card {
+    background: white;
+    color: #333; /* Make text dark so it's visible on white */
+    padding: 40px;
+    border-radius: 12px;
+    width: 500px;
+    text-align: center;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+
+/* title */
+.role-card h2,
+.role-card h3 {
+    color: #222;
+    margin-bottom: 10px;
+}
+
+.role-card p {
+    color: gray;
+    margin-bottom: 30px;
+}
+
+/* roles container */
+.roles {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    margin-bottom: 30px;
+}
+
+/* role box */
+.role-box {
+    border: 2px solid #ddd;
+    padding: 20px;
+    border-radius: 10px;
+    cursor: pointer;
+    width: 180px;
+    transition: 0.3s;
+}
+
+.role-box:hover {
+    border-color: #2bbbad;
+    transform: translateY(-5px);
+}
+
+/* selected state */
+.role-box.active {
+    border-color: #2bbbad;
+    background: #e6fffa;
+}
+
+/* next button */
+.next-btn {
+    padding: 12px 30px;
+    border: none;
+    background: #2bbbad;
+    color: white;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.next-btn:hover {
+    background: #249e91;
+}
+
+/* login input fields */
+.role-input {
+    width: 100%;
+    padding: 12px;
+    margin-bottom: 15px;
+    border: 2px solid #ddd;
+    border-radius: 8px;
+    font-size: 16px;
+    box-sizing: border-box;
+    transition: 0.3s;
+}
+
+.role-input:focus {
+    border-color: #2bbbad;
+    outline: none;
+}
